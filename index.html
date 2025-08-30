@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft-Style Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #87CEEB;
+            font-family: Arial, sans-serif;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            z-index: 100;
+        }
+        
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: white;
+        }
+        
+        #crosshair::before {
+            width: 20px;
+            height: 2px;
+            top: 9px;
+        }
+        
+        #crosshair::after {
+            width: 2px;
+            height: 20px;
+            left: 9px;
+        }
+        
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="ui">
+            <div>Minecraft-Style Game</div>
+            <div id="blockCount">Blocks: 0</div>
+        </div>
+        <div id="crosshair"></div>
+        <div id="instructions">
+            WASD: Move | Mouse: Look | Click: Place/Remove Block | Space: Jump
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        class MinecraftGame {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.world = new Map();
+                this.blockCount = 0;
+                
+                this.keys = {};
+                this.mouse = { x: 0, y: 0 };
+                this.velocity = { x: 0, y: 0, z: 0 };
+                this.onGround = false;
+                
+                this.init();
+            }
+            
+            init() {
+                // Setup renderer
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x87CEEB);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                document.getElementById('gameContainer').appendChild(this.renderer.domElement);
+                
+                // Setup camera
+                this.camera.position.set(0, 10, 0);
+                
+                // Add lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(50, 50, 50);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.mapSize.width = 2048;
+                directionalLight.shadow.mapSize.height = 2048;
+                this.scene.add(directionalLight);
+                
+                // Create ground
+                this.generateTerrain();
+                
+                // Setup controls
+                this.setupControls();
+                
+                // Start game loop
+                this.animate();
+            }
+            
+            generateTerrain() {
+                const grassMaterial = new THREE.MeshLambertMaterial({ color: 0x3a8a3a });
+                const dirtMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+                const stoneMaterial = new THREE.MeshLambertMaterial({ color: 0x808080 });
+                
+                for (let x = -20; x <= 20; x++) {
+                    for (let z = -20; z <= 20; z++) {
+                        const height = Math.floor(Math.random() * 3) + 1;
+                        
+                        for (let y = 0; y < height; y++) {
+                            let material;
+                            if (y === height - 1) {
+                                material = grassMaterial;
+                            } else if (y > height - 3) {
+                                material = dirtMaterial;
+                            } else {
+                                material = stoneMaterial;
+                            }
+                            
+                            this.placeBlock(x, y, z, material);
+                        }
+                    }
+                }
+            }
+            
+            placeBlock(x, y, z, material = null) {
+                const key = `${x},${y},${z}`;
+                
+                if (this.world.has(key)) return;
+                
+                const geometry = new THREE.BoxGeometry(1, 1, 1);
+                const blockMaterial = material || new THREE.MeshLambertMaterial({ color: 0x3a8a3a });
+                const block = new THREE.Mesh(geometry, blockMaterial);
+                
+                block.position.set(x, y, z);
+                block.castShadow = true;
+                block.receiveShadow = true;
+                
+                this.scene.add(block);
+                this.world.set(key, block);
+                this.blockCount++;
+                this.updateUI();
+            }
+            
+            removeBlock(x, y, z) {
+                const key = `${x},${y},${z}`;
+                
+                if (!this.world.has(key)) return;
+                
+                const block = this.world.get(key);
+                this.scene.remove(block);
+                this.world.delete(key);
+                this.blockCount--;
+                this.updateUI();
+            }
+            
+            setupControls() {
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+                
+                document.addEventListener('mousemove', (e) => {
+                    if (document.pointerLockElement === this.renderer.domElement) {
+                        this.mouse.x += e.movementX * 0.002;
+                        this.mouse.y += e.movementY * 0.002;
+                        this.mouse.y = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.mouse.y));
+                    }
+                });
+                
+                document.addEventListener('click', () => {
+                    if (document.pointerLockElement !== this.renderer.domElement) {
+                        this.renderer.domElement.requestPointerLock();
+                    } else {
+                        this.handleClick();
+                    }
+                });
+            }
+            
+            handleClick() {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera({ x: 0, y: 0 }, this.camera);
+                
+                const intersects = raycaster.intersectObjects(this.scene.children);
+                
+                if (intersects.length > 0) {
+                    const intersect = intersects[0];
+                    const face = intersect.face;
+                    const point = intersect.point;
+                    
+                    if (intersect.object.geometry.type === 'BoxGeometry') {
+                        const blockPos = intersect.object.position;
+                        
+                        // Remove block (right click simulation - for now just remove)
+                        if (Math.random() > 0.5) {
+                            this.removeBlock(blockPos.x, blockPos.y, blockPos.z);
+                        } else {
+                            // Place block
+                            const normal = face.normal.clone();
+                            normal.transformDirection(intersect.object.matrixWorld);
+                            
+                            const newPos = {
+                                x: Math.round(blockPos.x + normal.x),
+                                y: Math.round(blockPos.y + normal.y),
+                                z: Math.round(blockPos.z + normal.z)
+                            };
+                            
+                            this.placeBlock(newPos.x, newPos.y, newPos.z);
+                        }
+                    }
+                }
+            }
+            
+            updateMovement() {
+                const speed = 0.1;
+                const jumpPower = 0.3;
+                
+                // Reset movement
+                const direction = new THREE.Vector3();
+                
+                // WASD movement
+                if (this.keys['KeyW']) direction.z -= 1;
+                if (this.keys['KeyS']) direction.z += 1;
+                if (this.keys['KeyA']) direction.x -= 1;
+                if (this.keys['KeyD']) direction.x += 1;
+                
+                // Normalize and apply speed
+                if (direction.length() > 0) {
+                    direction.normalize();
+                    direction.multiplyScalar(speed);
+                    
+                    // Apply camera rotation to movement
+                    direction.applyEuler(new THREE.Euler(0, this.mouse.x, 0));
+                }
+                
+                // Jumping
+                if (this.keys['Space'] && this.onGround) {
+                    this.velocity.y = jumpPower;
+                    this.onGround = false;
+                }
+                
+                // Apply gravity
+                this.velocity.y -= 0.01;
+                
+                // Update position
+                this.camera.position.x += direction.x;
+                this.camera.position.z += direction.z;
+                this.camera.position.y += this.velocity.y;
+                
+                // Simple ground collision
+                const groundLevel = this.getGroundLevel(this.camera.position.x, this.camera.position.z);
+                if (this.camera.position.y <= groundLevel + 1.8) {
+                    this.camera.position.y = groundLevel + 1.8;
+                    this.velocity.y = 0;
+                    this.onGround = true;
+                }
+                
+                // Update camera rotation
+                this.camera.rotation.set(this.mouse.y, this.mouse.x, 0);
+            }
+            
+            getGroundLevel(x, z) {
+                let maxY = 0;
+                const checkRadius = 1;
+                
+                for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+                    for (let dz = -checkRadius; dz <= checkRadius; dz++) {
+                        const checkX = Math.floor(x + dx);
+                        const checkZ = Math.floor(z + dz);
+                        
+                        for (let y = 20; y >= 0; y--) {
+                            const key = `${checkX},${y},${checkZ}`;
+                            if (this.world.has(key)) {
+                                maxY = Math.max(maxY, y + 1);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                return maxY;
+            }
+            
+            updateUI() {
+                document.getElementById('blockCount').textContent = `Blocks: ${this.blockCount}`;
+            }
+            
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                this.updateMovement();
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (window.game) {
+                window.game.camera.aspect = window.innerWidth / window.innerHeight;
+                window.game.camera.updateProjectionMatrix();
+                window.game.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        });
+        
+        // Start the game
+        window.game = new MinecraftGame();
+    </script>
+</body> 
+</html>
